@@ -1,4 +1,4 @@
-import { runPipeline } from '@/lib/gemini'
+import { runPipeline, type AiPipelineCheckpointV1 } from '@/lib/gemini'
 import { parseImportedSnapshot } from '@/lib/snapshot'
 import {
   SCHEMA_VERSION,
@@ -74,6 +74,8 @@ export const useAppStore = defineStore('app', () => {
   const aiTimeline = ref<string[]>([])
   const aiDebugPrompt = ref('')
   const aiDebugOpen = ref(false)
+  /** Son başarılı AI adımından sonra resume için (hata olunca dolu kalır) */
+  const aiPipelineCheckpoint = ref<AiPipelineCheckpointV1 | null>(null)
 
   function pushAiTimeline(message: string) {
     aiTimeline.value = [...aiTimeline.value.slice(-7), message]
@@ -191,6 +193,7 @@ export const useAppStore = defineStore('app', () => {
         srtError.value = 'SRT içinde uygun blok bulunamadı'
         return
       }
+      aiPipelineCheckpoint.value = null
       snapshot.value.srtBlocks = blocks
       snapshot.value.ai = emptyAiPayload()
       captionStatus.value = { state: 'ok', message: `${blocks.length} satır yerel SRT yüklendi` }
@@ -209,6 +212,7 @@ export const useAppStore = defineStore('app', () => {
     captionStatus.value = { state: 'loading', message: 'Videodan altyazı çekiliyor…' }
     try {
       const { blocks, track } = await fetchAutoCaptionBlocks(vid)
+      aiPipelineCheckpoint.value = null
       snapshot.value.srtBlocks = blocks
       snapshot.value.ai = emptyAiPayload()
       srtError.value = null
@@ -239,6 +243,7 @@ export const useAppStore = defineStore('app', () => {
     srtError.value = null
     captionStatus.value = { state: 'idle' }
     lastCaptionVideoId.value = null
+    aiPipelineCheckpoint.value = null
     persist()
   }
 
@@ -300,7 +305,7 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  async function generateFromAi() {
+  async function generateFromAi(options?: { resume?: boolean }) {
     const blocks = snapshot.value.srtBlocks
     if (!blocks.length) {
       snapshot.value.ai.processing = {
@@ -310,7 +315,18 @@ export const useAppStore = defineStore('app', () => {
       pushAiTimeline('Hata: Önce bir SRT dosyası yükleyin')
       return
     }
-    aiTimeline.value = ['AI işlemi başlatıldı']
+    const resume = options?.resume ? aiPipelineCheckpoint.value : null
+    if (!options?.resume) {
+      aiPipelineCheckpoint.value = null
+    } else if (!resume) {
+      snapshot.value.ai.processing = {
+        status: 'error',
+        lastError: 'Kayıtlı devam noktası yok. Önce "AI ile işle" çalıştırın.',
+      }
+      pushAiTimeline('Hata: Kayıtlı devam noktası yok')
+      return
+    }
+    aiTimeline.value = [options?.resume ? 'AI işlemi kaldığı yerden sürüyor' : 'AI işlemi başlatıldı']
     aiDebugPrompt.value = ''
     snapshot.value.ai.processing = { status: 'running', message: 'Başlıyor…' }
     try {
@@ -326,7 +342,15 @@ export const useAppStore = defineStore('app', () => {
           aiDebugPrompt.value = `# ${phase}\n\n${prompt}`
           pushAiTimeline(`Prompt hazırlandı: ${phase}`)
         },
+        {
+          resume,
+          enableSrtRepair: snapshot.value.aiRepairSrt,
+          onCheckpoint: (cp) => {
+            aiPipelineCheckpoint.value = cp
+          },
+        },
       )
+      aiPipelineCheckpoint.value = null
       snapshot.value.srtBlocks = repairedBlocks
       snapshot.value.ai.chunks = chunks
       snapshot.value.ai.quiz = quiz
@@ -339,6 +363,10 @@ export const useAppStore = defineStore('app', () => {
       snapshot.value.ai.processing = { status: 'error', lastError: err }
       pushAiTimeline(`Hata: ${err}`)
     }
+  }
+
+  function retryAiPipeline() {
+    void generateFromAi({ resume: true })
   }
 
   return {
@@ -363,6 +391,8 @@ export const useAppStore = defineStore('app', () => {
     exportJsonBlob,
     importJsonFile,
     generateFromAi,
+    retryAiPipeline,
+    aiPipelineCheckpoint,
     setGeminiApiKey,
     captionStatus,
     aiTimeline,

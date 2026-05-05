@@ -50,10 +50,8 @@ function stripJsonFence(raw: string): string {
   return t
 }
 
-function extractFirstJsonObject(raw: string): string | null {
-  const t = raw.trim()
-  const start = t.indexOf('{')
-  if (start < 0) return null
+function extractJsonObjectFromPosition(t: string, start: number): string | null {
+  if (start < 0 || start >= t.length || t[start] !== '{') return null
   let depth = 0
   let inString = false
   let escaped = false
@@ -82,6 +80,111 @@ function extractFirstJsonObject(raw: string): string | null {
     }
   }
   return null
+}
+
+function extractFirstJsonObject(raw: string): string | null {
+  const t = raw.trim()
+  const start = t.indexOf('{')
+  return extractJsonObjectFromPosition(t, start)
+}
+
+/** Model bazen önce açıklama yazar; ardından ikinci bir JSON objesi dönebilir. */
+function collectJsonObjectCandidates(raw: string): string[] {
+  const t = stripJsonFence(raw).trim()
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (let i = 0; i < t.length; i++) {
+    if (t[i] !== '{') continue
+    const chunk = extractJsonObjectFromPosition(t, i)
+    if (chunk && !seen.has(chunk)) {
+      seen.add(chunk)
+      out.push(chunk)
+    }
+  }
+  return out
+}
+
+/** JSON dışı yaygın hatalar: sondaki virgül, akıllı tırnak */
+function removeTrailingCommasOutsideStrings(s: string): string {
+  let result = ''
+  let inString = false
+  let escaped = false
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (inString) {
+      result += ch
+      if (escaped) {
+        escaped = false
+      } else if (ch === '\\') {
+        escaped = true
+      } else if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+      result += ch
+      continue
+    }
+    if (ch === ',' && i + 1 < s.length) {
+      let j = i + 1
+      while (j < s.length && /\s/.test(s[j])) j++
+      const next = s[j]
+      if (next === '}' || next === ']') {
+        i = j - 1
+        continue
+      }
+    }
+    result += ch
+  }
+  return result
+}
+
+function normalizeJsonishQuotes(s: string): string {
+  return s.replace(/[\u201c\u201d\u2018\u2019]/g, '"')
+}
+
+function tryParseModelJsonRoot(raw: string): unknown {
+  const t = normalizeJsonishQuotes(stripJsonFence(raw).trim())
+  const candidates: string[] = []
+  if (t) candidates.push(t)
+  for (const c of collectJsonObjectCandidates(raw)) {
+    candidates.push(normalizeJsonishQuotes(c))
+  }
+
+  for (const cand of candidates) {
+    const variants = [cand, removeTrailingCommasOutsideStrings(cand)]
+    for (const v of variants) {
+      try {
+        return JSON.parse(v)
+      } catch {
+        /* try next */
+      }
+    }
+  }
+  throw new Error('Model çıktısı geçerli JSON değil')
+}
+
+function parseLooseRepairItems(raw: string): SrtRepairItem[] {
+  const out: SrtRepairItem[] = []
+  const jsLikePairRe =
+    /(?:^|[\s,{[])\s*["']?index["']?\s*[:=]\s*(\d+)[\s,}]+["']?text["']?\s*[:=]\s*["']([^"']+)["']/gim
+  let m: RegExpExecArray | null
+  while ((m = jsLikePairRe.exec(raw))) {
+    const index = Number(m[1])
+    const text = (m[2] ?? '').trim()
+    if (Number.isFinite(index) && text) out.push({ index, text })
+  }
+  if (out.length) return out
+
+  const linePairRe = /^\s*(\d+)\s*[:\-–]\s*(.+)$/gm
+  while ((m = linePairRe.exec(raw))) {
+    const index = Number(m[1])
+    const text = (m[2] ?? '').trim()
+    if (Number.isFinite(index) && text) out.push({ index, text })
+  }
+  return out
 }
 
 export function chunkSubtitles(blocks: SubtitleBlock[], maxLinesPerChunk = 6): SubtitleBlock[][] {
@@ -175,18 +278,15 @@ Questions should test vocabulary and comprehension. Mix difficulty. Output ONLY 
 }
 
 export function parseAiJson(raw: string, batchOffset = 0): AiBatchResult {
-  const cleaned = stripJsonFence(raw)
   let parsed: unknown
   try {
-    parsed = JSON.parse(cleaned)
+    parsed = tryParseModelJsonRoot(raw)
   } catch {
-    const extracted = extractFirstJsonObject(cleaned)
-    if (!extracted) throw new Error('Model çıktısı geçerli JSON değil')
-    try {
-      parsed = JSON.parse(extracted)
-    } catch {
-      throw new Error('Model çıktısı geçerli JSON değil')
-    }
+    throw new Error('Model çıktısı geçerli JSON değil')
+  }
+  if (Array.isArray(parsed)) {
+    const arr = parsed as unknown[]
+    parsed = { chunks: arr, quiz: [] }
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('JSON kökü nesne olmalı')
@@ -256,10 +356,17 @@ export function parseSrtRepairJson(raw: string): SrtRepairItem[] {
     parsed = JSON.parse(cleaned)
   } catch {
     const extracted = extractFirstJsonObject(cleaned)
-    if (!extracted) throw new Error('SRT düzeltme çıktısı geçerli JSON değil')
-    try {
-      parsed = JSON.parse(extracted)
-    } catch {
+    if (extracted) {
+      try {
+        parsed = JSON.parse(extracted)
+      } catch {
+        const looseItems = parseLooseRepairItems(cleaned)
+        if (looseItems.length) return looseItems
+        throw new Error('SRT düzeltme çıktısı geçerli JSON değil')
+      }
+    } else {
+      const looseItems = parseLooseRepairItems(cleaned)
+      if (looseItems.length) return looseItems
       throw new Error('SRT düzeltme çıktısı geçerli JSON değil')
     }
   }

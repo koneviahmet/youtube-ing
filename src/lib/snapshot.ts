@@ -38,6 +38,8 @@ export function parseImportedSnapshot(raw: unknown): AppSnapshot {
     typeof raw.geminiModelId === 'string' ? raw.geminiModelId.trim() : ''
   const geminiModelId = geminiModelIdRaw || base.geminiModelId
 
+  const aiRepairSrt = raw.aiRepairSrt === true
+
   const panelRatio =
     typeof raw.panelRatio === 'number' && raw.panelRatio > 0.15 && raw.panelRatio < 0.95
       ? raw.panelRatio
@@ -105,6 +107,7 @@ export function parseImportedSnapshot(raw: unknown): AppSnapshot {
     videoUrlOrId,
     panelRatio,
     geminiModelId,
+    aiRepairSrt,
     srtBlocks,
     ai,
     activeTab,

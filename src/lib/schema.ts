@@ -56,6 +56,8 @@ export interface AppSnapshot {
   panelRatio: number
   /** Google AI Gemini `generateContent` model id (ör. gemini-2.0-flash) */
   geminiModelId: string
+  /** Açıksa AI ile işlemeden önce SRT satırları sınır onarımından geçer (varsayılan kapalı) */
+  aiRepairSrt: boolean
   /** 0–1 left panel width fraction */
   srtBlocks: SubtitleBlock[]
   ai: AiPayload
@@ -78,6 +80,7 @@ export function defaultSnapshot(): AppSnapshot {
     videoUrlOrId: '',
     panelRatio: 0.52,
     geminiModelId: 'gemini-2.0-flash',
+    aiRepairSrt: false,
     srtBlocks: [],
     ai: emptyAiPayload(),
     activeTab: 'cards',
