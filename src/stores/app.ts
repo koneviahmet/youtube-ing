@@ -11,12 +11,24 @@ import { fetchAutoCaptionBlocks } from '@/lib/youtubeCaptions'
 import { extractYoutubeVideoId } from '@/lib/youtube'
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
-import defaultJsonRaw from '../../youtube-ing-1777899086401.json'
-import defaultSrtRaw from '../../learn English through cartoon movie with subtitles - great way to learn English online [English (auto-generated)] [DownloadYoutubeSubtitles.com].srt?raw'
 
 const LS_KEY = 'youtube-ing-state-v1'
 const BACKUP_KEY = 'youtube-ing-backup-v1'
 const USE_DEFAULT_IMPORTS = String(import.meta.env.VITE_USE_DEFAULT_IMPORTS ?? '').toLowerCase() === 'true'
+const defaultJsonModules = import.meta.glob('../../youtube-ing-*.json', {
+  eager: true,
+  import: 'default',
+}) as Record<string, unknown>
+const defaultSrtModules = import.meta.glob('../../*.srt', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+}) as Record<string, string>
+
+function pickFirstModuleValue<T>(modules: Record<string, T>) {
+  const firstPath = Object.keys(modules).sort()[0]
+  return firstPath ? modules[firstPath] : undefined
+}
 
 function debounce(fn: () => void, ms: number) {
   let t: ReturnType<typeof setTimeout> | null = null
@@ -72,8 +84,11 @@ export const useAppStore = defineStore('app', () => {
   function loadSeedSnapshot(): AppSnapshot {
     if (!USE_DEFAULT_IMPORTS) return defaultSnapshot()
     try {
-      const imported = parseImportedSnapshot(defaultJsonRaw as unknown)
-      const seededBlocks = parseSrt(defaultSrtRaw)
+      const jsonRaw = pickFirstModuleValue(defaultJsonModules)
+      if (!jsonRaw) return defaultSnapshot()
+      const imported = parseImportedSnapshot(jsonRaw)
+      const srtRaw = pickFirstModuleValue(defaultSrtModules)
+      const seededBlocks = srtRaw ? parseSrt(srtRaw) : []
       if (seededBlocks.length) imported.srtBlocks = seededBlocks
       return imported
     } catch {
