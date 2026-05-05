@@ -19,7 +19,9 @@ Schema for EACH response object:
 Rules:
 - Preserve meaning of subtitles; chunk by semantic units (roughly 2–6 subtitle lines together).
 - key_vocab: 3–8 useful words/phrases per chunk with Turkish meanings.
-- grammar_note: one short sentence if relevant, else empty string.
+- grammar_note: MUST be in Turkish and more detailed (2-4 sentences).
+- grammar_note must explain sentence structure clearly: subject (ozne), verb (yuklem), object/complement (nesne/tumlec), tense/aspect, and why that structure is used in context.
+- If there is no meaningful grammar point, return empty string. Never write grammar_note in English.
 - srt_indices: 0-based indices into the numbered subtitle list provided (must match lines you used).
 - For intermediate batches, set "quiz": [].
 - The subtitle stream may include rolling-caption artifacts (same sentence repeated with overlapping times). Treat near-duplicate lines as a single sentence and do not repeat them in "original" or "translation_tr".
