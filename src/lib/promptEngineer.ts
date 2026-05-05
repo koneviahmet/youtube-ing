@@ -37,12 +37,51 @@ export interface AiBatchResult {
   quiz: QuizQuestion[]
 }
 
+export interface SrtRepairItem {
+  index: number
+  text: string
+}
+
 function stripJsonFence(raw: string): string {
   const t = raw.trim()
   if (t.startsWith('```')) {
     return t.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
   }
   return t
+}
+
+function extractFirstJsonObject(raw: string): string | null {
+  const t = raw.trim()
+  const start = t.indexOf('{')
+  if (start < 0) return null
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < t.length; i++) {
+    const ch = t[i]
+    if (inString) {
+      if (escaped) {
+        escaped = false
+        continue
+      }
+      if (ch === '\\') {
+        escaped = true
+        continue
+      }
+      if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+      continue
+    }
+    if (ch === '{') depth += 1
+    else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) return t.slice(start, i + 1)
+    }
+  }
+  return null
 }
 
 export function chunkSubtitles(blocks: SubtitleBlock[], maxLinesPerChunk = 6): SubtitleBlock[][] {
@@ -57,6 +96,42 @@ function formatSubtitleBatch(batch: SubtitleBlock[], globalOffset: number): stri
   return batch
     .map((b, j) => `${globalOffset + j}. [${b.startSec.toFixed(2)}–${b.endSec.toFixed(2)}s] ${b.text}`)
     .join('\n')
+}
+
+export function buildSrtRepairPrompt(
+  batch: SubtitleBlock[],
+  globalStartIndex: number,
+  batchIndex: number,
+  totalBatches: number,
+  prevContextLine?: string,
+  nextContextLine?: string,
+): string {
+  const prevCtx = prevContextLine?.trim() || '(none)'
+  const nextCtx = nextContextLine?.trim() || '(none)'
+  return `SRT Repair Batch ${batchIndex + 1}/${totalBatches}.
+
+Input subtitle lines (index = full file index):
+${formatSubtitleBatch(batch, globalStartIndex)}
+
+Boundary context:
+- Previous outside line: ${prevCtx}
+- Next outside line: ${nextCtx}
+
+Task:
+- Fix broken sentence splits caused by subtitle timing cuts.
+- Keep meaning and word order flow faithful to subtitles.
+- Do NOT invent words.
+- Do NOT paraphrase.
+- Only adjust boundary placement between neighboring lines when clearly needed.
+- Keep output line count exactly same as input batch.
+- Return cleaned text per index.
+
+Return ONLY valid JSON:
+{
+  "items": [
+    { "index": number, "text": string }
+  ]
+}`
 }
 
 export function buildUserPromptForBatch(
@@ -105,7 +180,13 @@ export function parseAiJson(raw: string, batchOffset = 0): AiBatchResult {
   try {
     parsed = JSON.parse(cleaned)
   } catch {
-    throw new Error('Model çıktısı geçerli JSON değil')
+    const extracted = extractFirstJsonObject(cleaned)
+    if (!extracted) throw new Error('Model çıktısı geçerli JSON değil')
+    try {
+      parsed = JSON.parse(extracted)
+    } catch {
+      throw new Error('Model çıktısı geçerli JSON değil')
+    }
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('JSON kökü nesne olmalı')
@@ -166,6 +247,34 @@ export function parseAiJson(raw: string, batchOffset = 0): AiBatchResult {
   })
 
   return { chunks, quiz }
+}
+
+export function parseSrtRepairJson(raw: string): SrtRepairItem[] {
+  const cleaned = stripJsonFence(raw)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(cleaned)
+  } catch {
+    const extracted = extractFirstJsonObject(cleaned)
+    if (!extracted) throw new Error('SRT düzeltme çıktısı geçerli JSON değil')
+    try {
+      parsed = JSON.parse(extracted)
+    } catch {
+      throw new Error('SRT düzeltme çıktısı geçerli JSON değil')
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('SRT düzeltme JSON kökü nesne olmalı')
+  }
+  const root = parsed as Record<string, unknown>
+  const itemsRaw = Array.isArray(root.items) ? root.items : []
+  return itemsRaw
+    .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+    .map((x) => ({
+      index: typeof x.index === 'number' ? x.index : -1,
+      text: typeof x.text === 'string' ? x.text.trim() : '',
+    }))
+    .filter((x) => x.index >= 0 && !!x.text)
 }
 
 export { SYSTEM as aiSystemPrompt }

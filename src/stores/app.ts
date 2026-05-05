@@ -314,7 +314,7 @@ export const useAppStore = defineStore('app', () => {
     aiDebugPrompt.value = ''
     snapshot.value.ai.processing = { status: 'running', message: 'Başlıyor…' }
     try {
-      const { chunks, quiz } = await runPipeline(
+      const { repairedBlocks, chunks, quiz } = await runPipeline(
         blocks,
         snapshot.value.geminiModelId,
         geminiApiKey.value,
@@ -327,10 +327,13 @@ export const useAppStore = defineStore('app', () => {
           pushAiTimeline(`Prompt hazırlandı: ${phase}`)
         },
       )
+      snapshot.value.srtBlocks = repairedBlocks
       snapshot.value.ai.chunks = chunks
       snapshot.value.ai.quiz = quiz
       snapshot.value.ai.processing = { status: 'idle', message: 'Tamamlandı' }
-      pushAiTimeline(`Tamamlandı: ${chunks.length} kart, ${quiz.length} soru`)
+      pushAiTimeline(
+        `Tamamlandı: ${repairedBlocks.length} altyazı satırı düzeltildi, ${chunks.length} kart, ${quiz.length} soru`,
+      )
     } catch (e) {
       const err = String(e)
       snapshot.value.ai.processing = { status: 'error', lastError: err }

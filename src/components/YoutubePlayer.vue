@@ -141,8 +141,27 @@ function onSeek(sec: number, autoplay = false) {
   }
 }
 
+function onPlaySegment(startSec: number, endSec: number) {
+  if (!(Number.isFinite(startSec) && Number.isFinite(endSec))) return
+  const safeStart = Math.max(0, startSec)
+  const safeEnd = Math.max(safeStart + 0.05, endSec)
+  onSeek(safeStart, true)
+  const poll = setInterval(() => {
+    try {
+      const t = player?.getCurrentTime()
+      if (typeof t !== 'number' || Number.isNaN(t)) return
+      if (t >= safeEnd) {
+        clearInterval(poll)
+        player?.pauseVideo()
+      }
+    } catch {
+      clearInterval(poll)
+    }
+  }, 80)
+}
+
 function onCtl(e: Event) {
-  const ce = e as CustomEvent<number | { sec?: number; autoplay?: boolean }>
+  const ce = e as CustomEvent<number | { sec?: number; autoplay?: boolean; startSec?: number; endSec?: number }>
   if (e.type === 'youtube-ing-toggle-play') onTogglePlay()
   if (e.type === 'youtube-ing-seek') {
     if (typeof ce.detail === 'number') {
@@ -153,16 +172,28 @@ function onCtl(e: Event) {
       onSeek(ce.detail.sec, Boolean(ce.detail.autoplay))
     }
   }
+  if (e.type === 'youtube-ing-play-segment') {
+    if (
+      ce.detail &&
+      typeof ce.detail === 'object' &&
+      typeof ce.detail.startSec === 'number' &&
+      typeof ce.detail.endSec === 'number'
+    ) {
+      onPlaySegment(ce.detail.startSec, ce.detail.endSec)
+    }
+  }
 }
 
 onMounted(() => {
   window.addEventListener('youtube-ing-toggle-play', onCtl)
   window.addEventListener('youtube-ing-seek', onCtl as EventListener)
+  window.addEventListener('youtube-ing-play-segment', onCtl as EventListener)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('youtube-ing-toggle-play', onCtl)
   window.removeEventListener('youtube-ing-seek', onCtl as EventListener)
+  window.removeEventListener('youtube-ing-play-segment', onCtl as EventListener)
   clearTimer()
   player?.destroy()
 })

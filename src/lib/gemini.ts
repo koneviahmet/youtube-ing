@@ -1,9 +1,11 @@
 import {
   aiSystemPrompt,
+  buildSrtRepairPrompt,
   buildQuizOnlyPrompt,
   buildUserPromptForBatch,
   chunkSubtitles,
   parseAiJson,
+  parseSrtRepairJson,
 } from '@/lib/promptEngineer'
 import { AUTO_GEMINI_MODEL_ID, DEFAULT_GEMINI_MODEL_ID } from '@/lib/geminiModels'
 import type { LearningChunk, QuizQuestion, SubtitleBlock } from '@/lib/schema'
@@ -23,6 +25,19 @@ interface GeminiGenerateBody {
     responseMimeType?: string
   }
 }
+
+const srtRepairSystemPrompt = `You are a subtitle line repair assistant. Output ONLY valid JSON.
+
+Goal:
+- Repair broken sentence boundaries across neighboring subtitle lines.
+- Keep subtitle content faithful.
+
+Hard constraints:
+- Do not invent words.
+- Do not paraphrase.
+- Do not change speaker intent.
+- Keep indexes unchanged.
+- Return one repaired text for each provided index.`
 
 function extractGeminiText(data: unknown): string {
   const o = data as {
@@ -147,6 +162,60 @@ async function generateJson(
   }
 }
 
+async function repairSubtitleBlocks(
+  blocks: SubtitleBlock[],
+  model: string,
+  apiKey: string,
+  onProgress?: (msg: string) => void,
+  onDebugPrompt?: (event: PipelineDebugEvent) => void,
+): Promise<SubtitleBlock[]> {
+  if (!blocks.length) return blocks
+  const repairBatches = chunkSubtitles(blocks, 20)
+  const repaired = blocks.map((b) => ({ ...b }))
+  let offset = 0
+
+  for (let bi = 0; bi < repairBatches.length; bi++) {
+    const batch = repairBatches[bi]
+    onProgress?.(`Gemini (${model}): SRT düzeltme ${bi + 1}/${repairBatches.length}`)
+    const prevContextLine = offset > 0 ? blocks[offset - 1]?.text : undefined
+    const nextContextLine = blocks[offset + batch.length]?.text
+    const prompt = buildSrtRepairPrompt(
+      batch,
+      offset,
+      bi,
+      repairBatches.length,
+      prevContextLine,
+      nextContextLine,
+    )
+    onDebugPrompt?.({
+      phase: `SRT düzeltme ${bi + 1}/${repairBatches.length}`,
+      prompt,
+    })
+    let text: string
+    try {
+      text = await generateJson(model, srtRepairSystemPrompt, prompt, apiKey)
+    } catch {
+      await new Promise((r) => setTimeout(r, 1200))
+      text = await generateJson(model, srtRepairSystemPrompt, prompt, apiKey)
+    }
+    const repairedItems = parseSrtRepairJson(text)
+    const localMap = new Map<number, string>()
+    for (const item of repairedItems) {
+      localMap.set(item.index, item.text)
+    }
+    for (let i = 0; i < batch.length; i++) {
+      const globalIdx = offset + i
+      const candidate = localMap.get(globalIdx)?.trim()
+      if (candidate) {
+        repaired[globalIdx] = { ...repaired[globalIdx], text: candidate }
+      }
+    }
+    offset += batch.length
+  }
+
+  return repaired
+}
+
 /** SRT partileri + 10 çoktan seçmeli sınav */
 export async function runPipeline(
   blocks: SubtitleBlock[],
@@ -154,19 +223,27 @@ export async function runPipeline(
   userApiKey: string,
   onProgress?: (msg: string) => void,
   onDebugPrompt?: (event: PipelineDebugEvent) => void,
-): Promise<{ chunks: LearningChunk[]; quiz: QuizQuestion[] }> {
+): Promise<{ repairedBlocks: SubtitleBlock[]; chunks: LearningChunk[]; quiz: QuizQuestion[] }> {
   const selected = modelId.trim()
   const model =
     !selected || selected === AUTO_GEMINI_MODEL_ID ? DEFAULT_GEMINI_MODEL_ID : selected
-  const batches = chunkSubtitles(blocks, 6)
+  onProgress?.(`Gemini (${model}): SRT metni AI ile düzeltiliyor…`)
+  const repairedBlocks = await repairSubtitleBlocks(
+    blocks,
+    model,
+    userApiKey,
+    onProgress,
+    onDebugPrompt,
+  )
+  const batches = chunkSubtitles(repairedBlocks, 6)
   const allChunks: LearningChunk[] = []
   let offset = 0
 
   for (let bi = 0; bi < batches.length; bi++) {
     const batch = batches[bi]
     onProgress?.(`Gemini (${model}): parti ${bi + 1}/${batches.length}`)
-    const prevContextLine = offset > 0 ? blocks[offset - 1]?.text : undefined
-    const nextContextLine = blocks[offset + batch.length]?.text
+    const prevContextLine = offset > 0 ? repairedBlocks[offset - 1]?.text : undefined
+    const nextContextLine = repairedBlocks[offset + batch.length]?.text
     const user = buildUserPromptForBatch(
       batch,
       offset,
@@ -193,7 +270,7 @@ export async function runPipeline(
 
   const summary = allChunks.map((c) => c.original).join('\n')
   onProgress?.(`Gemini (${model}): sınav soruları…`)
-  const quizPrompt = buildQuizOnlyPrompt(summary || blocks.map((b) => b.text).join('\n'))
+  const quizPrompt = buildQuizOnlyPrompt(summary || repairedBlocks.map((b) => b.text).join('\n'))
   onDebugPrompt?.({
     phase: 'Sınav promptu',
     prompt: quizPrompt,
@@ -209,5 +286,5 @@ export async function runPipeline(
   let quiz = quizParsed.quiz
   if (quiz.length > 10) quiz = quiz.slice(0, 10)
 
-  return { chunks: allChunks, quiz }
+  return { repairedBlocks, chunks: allChunks, quiz }
 }
