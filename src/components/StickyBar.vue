@@ -354,7 +354,7 @@ onBeforeUnmount(() => {
                 @input="onGeminiApiKeyInput"
               />
               <p v-if="!hasEnvGeminiApiKey" class="mb-3 text-[10px] text-warn">
-                `.env` içinde `GEMINI_API_KEY` yok. AI için buraya anahtar girin; localStorage'da saklanır.
+                AI için buraya anahtar girin; localStorage'da saklanır.
               </p>
               <p v-else class="mb-3 text-[10px] text-fg-subtle">
                 `.env` anahtarı varsa öncelik ondadır, yoksa bu alandaki anahtar kullanılır.
