@@ -62,13 +62,56 @@ async function postGenerate(
       ...(jsonMode ? { responseMimeType: 'application/json' } : {}),
     },
   }
-  const res = await fetch('/api/gemini/generateContent', {
+  let res: Response
+  try {
+    res = await fetch('/api/gemini/generateContent', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { 'x-user-gemini-key': apiKey } : {}),
+      },
+      body: JSON.stringify(body),
+    })
+  } catch (e) {
+    if (apiKey) {
+      return postGenerateDirect(model, body, apiKey)
+    }
+    throw e
+  }
+  let text = await res.text()
+  if (!res.ok) {
+    // Some deployments do not expose the dev proxy route.
+    if (apiKey && (res.status === 404 || res.status === 405)) {
+      return postGenerateDirect(model, body, apiKey)
+    }
+    throw new Error(text.slice(0, 800) || `HTTP ${res.status}`)
+  }
+  let data: unknown
+  try {
+    data = JSON.parse(text) as unknown
+  } catch {
+    throw new Error(text.slice(0, 600) || 'Geçersiz API yanıtı')
+  }
+  return extractGeminiText(data)
+}
+
+async function postGenerateDirect(
+  model: string,
+  body: GeminiGenerateBody,
+  apiKey: string,
+): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`
+  const res = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(apiKey ? { 'x-user-gemini-key': apiKey } : {}),
+      'x-goog-api-key': apiKey,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      systemInstruction: body.systemInstruction,
+      contents: body.contents,
+      generationConfig: body.generationConfig,
+    }),
   })
   const text = await res.text()
   if (!res.ok) {

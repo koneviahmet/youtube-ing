@@ -31,6 +31,9 @@ function summarizeErrorText(raw: string): string {
   ) {
     return 'Google otomatik sorguları geçici olarak engelledi. Bir süre sonra tekrar deneyin veya yerel .srt yükleyin.'
   }
+  if (lower.startsWith('<!doctype html') || lower.startsWith('<html')) {
+    return 'API JSON yerine HTML döndürdü. Geliştirme proxy endpointleri aktif olmayabilir.'
+  }
   return t.length > 240 ? `${t.slice(0, 240)}...` : t
 }
 
@@ -129,7 +132,13 @@ async function fetchFallbackCaptionBlocks(
       lastErr = summarizeErrorText(text) || `HTTP ${r.status}`
       continue
     }
-    const json = JSON.parse(text) as FallbackPayload
+    let json: FallbackPayload
+    try {
+      json = JSON.parse(text) as FallbackPayload
+    } catch {
+      lastErr = summarizeErrorText(text) || 'Geçersiz JSON yanıtı'
+      continue
+    }
     if (json.error) {
       lastErr = json.error
       continue
