@@ -24,6 +24,10 @@ export interface LearningChunk {
   grammar_note?: string
   /** Indices of SRT blocks covered by this chunk (optional linkage) */
   srtIndices?: number[]
+  /** Oynatıcı kesiti için başlangıç (sn); verilmişse varsayılan SRT tabanlı başlangıç yerine kullanılır */
+  playbackStartSec?: number
+  /** Oynatıcı kesiti için bitiş (sn); verilmişse varsayılan SRT tabanlı bitiş yerine kullanılır */
+  playbackEndSec?: number
 }
 
 export interface QuizOption {

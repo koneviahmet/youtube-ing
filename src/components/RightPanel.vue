@@ -20,7 +20,7 @@ const tabs = [
     class="flex min-h-0 flex-1 flex-col rounded-lg border border-white/10 bg-surface-raised/30 shadow-panel"
   >
     <div
-      class="flex shrink-0 items-center justify-center gap-0.5 border-b border-white/10 px-1 py-1"
+      class="relative flex shrink-0 items-center justify-center gap-0.5 border-b border-white/10 px-1 py-1 pr-11 sm:pr-12"
       role="tablist"
       aria-label="Sağ panel"
     >
@@ -40,6 +40,22 @@ const tabs = [
         @click="store.setActiveTab(t.id)"
       >
         <span class="truncate">{{ t.text }}</span>
+      </button>
+      <button
+        v-if="snapshot.activeTab === 'cards' && store.learningCardsHasActiveEdit"
+        type="button"
+        class="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md border border-accent/45 bg-accent/15 text-accent transition-colors hover:bg-accent/25"
+        title="Kart düzenleme aktif — güncel durumu JSON olarak indir"
+        aria-label="Düzenlenmiş kartların JSON çıktısını indir"
+        @click="store.exportSnapshotJsonDownload()"
+      >
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
+          />
+        </svg>
       </button>
     </div>
 

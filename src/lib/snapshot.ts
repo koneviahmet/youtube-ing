@@ -68,6 +68,14 @@ export function parseImportedSnapshot(raw: unknown): AppSnapshot {
         srtIndices: Array.isArray(c.srtIndices)
           ? c.srtIndices.filter((n): n is number => typeof n === 'number')
           : undefined,
+        playbackStartSec:
+          typeof c.playbackStartSec === 'number' && Number.isFinite(c.playbackStartSec)
+            ? c.playbackStartSec
+            : undefined,
+        playbackEndSec:
+          typeof c.playbackEndSec === 'number' && Number.isFinite(c.playbackEndSec)
+            ? c.playbackEndSec
+            : undefined,
       }))
     }
     if (Array.isArray(raw.ai.quiz)) {

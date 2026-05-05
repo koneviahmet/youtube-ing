@@ -10,7 +10,7 @@ import { parseSrt } from '@/lib/srt'
 import { fetchAutoCaptionBlocks } from '@/lib/youtubeCaptions'
 import { extractYoutubeVideoId } from '@/lib/youtube'
 import { defineStore } from 'pinia'
-import { computed, ref, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 
 const LS_KEY = 'youtube-ing-state-v1'
 const BACKUP_KEY = 'youtube-ing-backup-v1'
@@ -181,8 +181,21 @@ export const useAppStore = defineStore('app', () => {
     snapshot.value.panelRatio = Math.min(0.9, Math.max(0.1, r))
   }
 
+  /** Öğrenme kartları sekmede hangi chunk'lar düzenleme modunda (UI + dışa aktarma göstergesi) */
+  const learningCardsEditingChunkIds = shallowRef<string[]>([])
+
+  const learningCardsHasActiveEdit = computed(() => learningCardsEditingChunkIds.value.length > 0)
+
+  function toggleLearningCardChunkEditing(chunkId: string) {
+    const cur = learningCardsEditingChunkIds.value
+    const i = cur.indexOf(chunkId)
+    if (i >= 0) learningCardsEditingChunkIds.value = cur.filter((id) => id !== chunkId)
+    else learningCardsEditingChunkIds.value = [...cur, chunkId]
+  }
+
   function setActiveTab(tab: AppSnapshot['activeTab']) {
     snapshot.value.activeTab = tab
+    if (tab !== 'cards') learningCardsEditingChunkIds.value = []
   }
 
   async function loadSrtFromFile(file: File) {
@@ -377,6 +390,16 @@ export const useAppStore = defineStore('app', () => {
     await generateFromAi(true)
   }
 
+  function exportSnapshotJsonDownload() {
+    const blob = exportJsonBlob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `youtube-ing-${Date.now()}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   return {
     snapshot,
     geminiApiKey,
@@ -408,5 +431,9 @@ export const useAppStore = defineStore('app', () => {
     aiDebugOpen,
     applyImported,
     persist,
+    learningCardsHasActiveEdit,
+    toggleLearningCardChunkEditing,
+    learningCardsEditingChunkIds,
+    exportSnapshotJsonDownload,
   }
 })
