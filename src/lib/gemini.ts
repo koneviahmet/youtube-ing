@@ -198,7 +198,14 @@ async function repairSubtitleBlocks(
       await new Promise((r) => setTimeout(r, 1200))
       text = await generateJson(model, srtRepairSystemPrompt, prompt, apiKey)
     }
-    const repairedItems = parseSrtRepairJson(text)
+    let repairedItems: ReturnType<typeof parseSrtRepairJson>
+    try {
+      repairedItems = parseSrtRepairJson(text)
+    } catch (e) {
+      onProgress?.(`SRT düzeltme uyarısı: ${String(e)} (orijinal satırlar korunuyor)`)
+      offset += batch.length
+      continue
+    }
     const localMap = new Map<number, string>()
     for (const item of repairedItems) {
       localMap.set(item.index, item.text)

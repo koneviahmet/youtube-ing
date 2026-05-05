@@ -263,18 +263,43 @@ export function parseSrtRepairJson(raw: string): SrtRepairItem[] {
       throw new Error('SRT düzeltme çıktısı geçerli JSON değil')
     }
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('SRT düzeltme JSON kökü nesne olmalı')
+  if (Array.isArray(parsed)) {
+    return parsed
+      .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+      .map((x) => ({
+        index: typeof x.index === 'number' ? x.index : -1,
+        text: typeof x.text === 'string' ? x.text.trim() : '',
+      }))
+      .filter((x) => x.index >= 0 && !!x.text)
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('SRT düzeltme JSON kökü nesne/array olmalı')
   }
   const root = parsed as Record<string, unknown>
-  const itemsRaw = Array.isArray(root.items) ? root.items : []
-  return itemsRaw
-    .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
-    .map((x) => ({
-      index: typeof x.index === 'number' ? x.index : -1,
-      text: typeof x.text === 'string' ? x.text.trim() : '',
-    }))
-    .filter((x) => x.index >= 0 && !!x.text)
+  if (Array.isArray(root.items)) {
+    return root.items
+      .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+      .map((x) => ({
+        index: typeof x.index === 'number' ? x.index : -1,
+        text: typeof x.text === 'string' ? x.text.trim() : '',
+      }))
+      .filter((x) => x.index >= 0 && !!x.text)
+  }
+  // Fallback for models that accidentally return the chunk schema.
+  if (Array.isArray(root.chunks)) {
+    return root.chunks
+      .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+      .flatMap((x) => {
+        const text = typeof x.original === 'string' ? x.original.trim() : ''
+        const indices = Array.isArray(x.srt_indices)
+          ? x.srt_indices.filter((n): n is number => typeof n === 'number')
+          : []
+        if (!text || !indices.length) return []
+        return [{ index: indices[0], text }]
+      })
+      .filter((x) => x.index >= 0 && !!x.text)
+  }
+  return []
 }
 
 export { SYSTEM as aiSystemPrompt }
