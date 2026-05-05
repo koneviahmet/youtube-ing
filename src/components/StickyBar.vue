@@ -14,7 +14,6 @@ const {
   aiTimeline,
   aiDebugOpen,
   aiDebugPrompt,
-  aiPipelineCheckpoint,
 } = storeToRefs(store)
 
 const srtInput = ref<HTMLInputElement | null>(null)
@@ -43,11 +42,6 @@ const statusLine = computed(() => {
   if (p.status === 'error') return p.lastError ?? 'Hata'
   return 'Hazır'
 })
-
-const showAiRetry = computed(
-  () =>
-    !!aiPipelineCheckpoint.value && snapshot.value.ai.processing.status === 'error',
-)
 
 function pickSrt() {
   srtInput.value?.click()
@@ -103,10 +97,6 @@ function restoreBackup() {
 
 async function runAi() {
   await store.generateFromAi()
-}
-
-async function retryAi() {
-  await store.retryAiPipeline()
 }
 
 function onGeminiApiKeyInput(e: Event) {
@@ -371,18 +361,6 @@ onBeforeUnmount(() => {
                 `.env` anahtarı varsa öncelik ondadır, yoksa bu alandaki anahtar kullanılır.
               </p>
 
-              <label
-                class="mb-3 flex cursor-pointer items-start gap-2 rounded-md border border-white/10 bg-surface-overlay/40 px-2 py-2 text-[11px] leading-snug text-fg-muted hover:bg-white/5"
-              >
-                <input
-                  v-model="snapshot.aiRepairSrt"
-                  type="checkbox"
-                  class="mt-0.5 shrink-0 rounded border-white/25 bg-surface-overlay accent-accent"
-                  :disabled="snapshot.ai.processing.status === 'running'"
-                />
-                <span>SRT satırlarını AI ile düzelt (kopuk zaman kesitleri; ek API çağrısı)</span>
-              </label>
-
               <select
                 v-model="snapshot.geminiModelId"
                 class="mb-3 w-full rounded-md border border-white/15 bg-surface-overlay px-2 py-2 text-xs text-fg focus:border-accent/40 disabled:opacity-50"
@@ -400,16 +378,6 @@ onBeforeUnmount(() => {
                 @click="runAi"
               >
                 AI ile işle
-              </button>
-
-              <button
-                v-if="showAiRetry"
-                type="button"
-                class="mb-3 w-full rounded-md border border-warn/50 bg-warn/10 py-2 text-sm font-semibold text-warn hover:bg-warn/20 disabled:opacity-40"
-                :disabled="snapshot.ai.processing.status === 'running' || !snapshot.srtBlocks.length"
-                @click="retryAi"
-              >
-                Tekrar dene (kaldığı yerden)
               </button>
 
               <button
