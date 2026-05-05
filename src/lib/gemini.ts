@@ -165,7 +165,16 @@ export async function runPipeline(
   for (let bi = 0; bi < batches.length; bi++) {
     const batch = batches[bi]
     onProgress?.(`Gemini (${model}): parti ${bi + 1}/${batches.length}`)
-    const user = buildUserPromptForBatch(batch, offset, bi, batches.length)
+    const prevContextLine = offset > 0 ? blocks[offset - 1]?.text : undefined
+    const nextContextLine = blocks[offset + batch.length]?.text
+    const user = buildUserPromptForBatch(
+      batch,
+      offset,
+      bi,
+      batches.length,
+      prevContextLine,
+      nextContextLine,
+    )
     onDebugPrompt?.({
       phase: `Parti ${bi + 1}/${batches.length}`,
       prompt: user,

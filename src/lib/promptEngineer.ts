@@ -18,6 +18,10 @@ Schema for EACH response object:
 
 Rules:
 - Preserve meaning of subtitles; chunk by semantic units (roughly 2–6 subtitle lines together).
+- Repair broken subtitle boundaries caused by SRT timing cuts (e.g., a word/phrase shifted to previous or next line).
+- While repairing, stay strictly faithful to the subtitle text: do NOT invent new content, do NOT paraphrase freely, do NOT change speaker intent.
+- You may merge adjacent lines and move boundary words to the correct neighboring sentence when clearly required by grammar/meaning.
+- Keep sentence order the same as the subtitle flow. Do not reorder distant lines.
 - key_vocab: 3–8 useful words/phrases per chunk with Turkish meanings.
 - grammar_note: MUST be in Turkish and more detailed (2-4 sentences).
 - grammar_note must explain sentence structure clearly: subject (ozne), verb (yuklem), object/complement (nesne/tumlec), tense/aspect, and why that structure is used in context.
@@ -25,6 +29,7 @@ Rules:
 - srt_indices: 0-based indices into the numbered subtitle list provided (must match lines you used).
 - For intermediate batches, set "quiz": [].
 - The subtitle stream may include rolling-caption artifacts (same sentence repeated with overlapping times). Treat near-duplicate lines as a single sentence and do not repeat them in "original" or "translation_tr".
+- IMPORTANT for "original": output corrected, fluent sentence groups reconstructed from the provided subtitle lines, but only using words already present in those lines/context.
 `
 
 export interface AiBatchResult {
@@ -59,12 +64,21 @@ export function buildUserPromptForBatch(
   globalStartIndex: number,
   batchIndex: number,
   totalBatches: number,
+  prevContextLine?: string,
+  nextContextLine?: string,
 ): string {
+  const prevCtx = prevContextLine?.trim()
+  const nextCtx = nextContextLine?.trim()
   return `Batch ${batchIndex + 1} of ${totalBatches}. Subtitle lines (index = position in FULL file, starting at ${globalStartIndex}):
 
 ${formatSubtitleBatch(batch, globalStartIndex)}
 
+Boundary context (for fixing broken sentence splits across batch edges):
+- Previous line (outside this batch): ${prevCtx || '(none)'}
+- Next line (outside this batch): ${nextCtx || '(none)'}
+
 Return JSON with "chunks" covering these lines and "quiz": [].
+If you notice sentence fragments split across lines (or batch edge), fix the boundary by attaching words to the correct neighboring sentence while staying faithful to subtitle text.
 If you still notice duplicate wording across adjacent lines, merge them into one semantic unit instead of repeating.`
 }
 
