@@ -1,6 +1,7 @@
 import {
   aiSystemPrompt,
   buildQuizOnlyPrompt,
+  buildQuizOnlyPromptFallback,
   buildUserPromptForBatch,
   chunkSubtitles,
   parseAiJson,
@@ -250,16 +251,17 @@ export async function runPipeline(
   }
 
   const summary = allChunks.map((c) => c.original).join('\n')
+  const summaryForQuiz = summary || blocks.map((b) => b.text).join('\n')
   onProgress?.(`Gemini (${model}): sınav soruları…`)
-  const quizPrompt = buildQuizOnlyPrompt(summary || blocks.map((b) => b.text).join('\n'))
+  const quizPrompt = buildQuizOnlyPrompt(summaryForQuiz)
   onDebugPrompt?.({
     phase: 'Sınav promptu',
     prompt: quizPrompt,
   })
   const quizOffset = blocks.length
   try {
-    let quizText = await fetchBatchJson(model, quizPrompt, userApiKey)
     let quizParsed: AiBatchResult
+    let quizText = await fetchBatchJson(model, quizPrompt, userApiKey)
     try {
       quizParsed = parseAiJson(quizText, quizOffset)
     } catch (firstQuizParseErr) {
@@ -268,7 +270,18 @@ export async function runPipeline(
       try {
         quizParsed = parseAiJson(quizText, quizOffset)
       } catch {
-        throw firstQuizParseErr
+        await new Promise((r) => setTimeout(r, 1200))
+        const fallbackPrompt = buildQuizOnlyPromptFallback(summaryForQuiz, 5)
+        onDebugPrompt?.({
+          phase: 'Sınav promptu (yedek, kısa)',
+          prompt: fallbackPrompt,
+        })
+        quizText = await fetchBatchJson(model, fallbackPrompt + JSON_STRICT_SUFFIX, userApiKey)
+        try {
+          quizParsed = parseAiJson(quizText, quizOffset)
+        } catch {
+          throw firstQuizParseErr
+        }
       }
     }
     let quiz = quizParsed.quiz

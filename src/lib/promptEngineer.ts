@@ -75,11 +75,55 @@ export function extractBalancedJsonObject(s: string): string | null {
   return null
 }
 
+/** Kökü `[` ile başlayan geçerli JSON dizisini ayıklar */
+export function extractBalancedJsonArray(s: string): string | null {
+  const start = s.indexOf('[')
+  if (start === -1) return null
+  let depth = 0
+  let inString = false
+  let escape = false
+  for (let i = start; i < s.length; i++) {
+    const c = s[i]
+    if (inString) {
+      if (escape) {
+        escape = false
+      } else if (c === '\\') {
+        escape = true
+      } else if (c === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (c === '"') {
+      inString = true
+      continue
+    }
+    if (c === '[') depth++
+    else if (c === ']') {
+      depth--
+      if (depth === 0) return s.slice(start, i + 1)
+    }
+  }
+  return null
+}
+
+function tryFixCommonJsonIssues(s: string): string {
+  let t = s.replace(/^\uFEFF/, '').trim()
+  // Yaygın: son elemandan sonra virgül
+  t = t.replace(/,\s*([}\]])/g, '$1')
+  return t
+}
+
 /** Model bazen önce/sonra açıklama veya markdown döner; JSON'u güvenilir şekilde ayıkla */
 export function normalizeModelJsonText(raw: string): string {
   const fenced = stripJsonFence(raw)
-  const balanced = extractBalancedJsonObject(fenced) ?? extractBalancedJsonObject(raw)
-  return (balanced ?? fenced).trim()
+  const balancedObj =
+    extractBalancedJsonObject(fenced) ?? extractBalancedJsonObject(raw)
+  if (balancedObj) return balancedObj.trim()
+  const balancedArr =
+    extractBalancedJsonArray(fenced) ?? extractBalancedJsonArray(raw)
+  if (balancedArr) return balancedArr.trim()
+  return fenced.trim()
 }
 
 export function chunkSubtitles(blocks: SubtitleBlock[], maxLinesPerChunk = 6): SubtitleBlock[][] {
@@ -114,7 +158,8 @@ export function buildQuizOnlyPrompt(fullTextSummary: string): string {
   return `Based on this English learning material (subtitles summary / key themes):
 ${fullTextSummary.slice(0, 12000)}
 
-Return JSON: { "chunks": [], "quiz": [ ... exactly 10 multiple choice questions ... ] }
+Return ONE JSON object only. Keys must be exactly "chunks" and "quiz" (no other top-level keys).
+Shape: { "chunks": [], "quiz": [ ... exactly 10 multiple choice questions ... ] }
 
 Each quiz item:
 {
@@ -124,15 +169,60 @@ Each quiz item:
   "correctOptionId": string
 }
 
-Questions should test vocabulary and comprehension. Mix difficulty. Output ONLY the JSON object.`
+Questions should test vocabulary and comprehension. Mix difficulty. Output ONLY the raw JSON object, no markdown.`
+}
+
+/** Sınav çıktısı kesildiğinde veya şema tutmadığında: daha az soru, daha kısa bağlam */
+export function buildQuizOnlyPromptFallback(
+  fullTextSummary: string,
+  maxQuestions = 5,
+): string {
+  const body = fullTextSummary.slice(0, 8000)
+  return `English quiz for Turkish learners. Material:
+${body}
+
+Return ONE JSON object only. Keys exactly: "chunks" (empty array) and "quiz" (array).
+Exactly ${maxQuestions} multiple-choice questions. Each item:
+{ "id": string, "prompt": string, "options": [ { "id": string, "text": string } x4 ], "correctOptionId": string }
+
+No markdown, no commentary — only the JSON object.`
+}
+
+function coerceQuizItem(q: unknown, i: number): QuizQuestion | null {
+  if (!q || typeof q !== 'object') return null
+  const r = q as Record<string, unknown>
+  const rawOptions = Array.isArray(r.options) ? r.options : Array.isArray(r.choices) ? r.choices : []
+  const options = rawOptions
+    .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+    .map((o, j) => ({
+      id: typeof o.id === 'string' ? o.id : `opt-${i}-${j}`,
+      text: typeof o.text === 'string' ? o.text : '',
+    }))
+  const correctRaw = r.correctOptionId ?? r.answer ?? r.answerId
+  return {
+    id: typeof r.id === 'string' ? r.id : `quiz-${i}`,
+    prompt: typeof r.prompt === 'string' ? r.prompt : typeof r.question === 'string' ? r.question : '',
+    options,
+    correctOptionId:
+      typeof correctRaw === 'string' ? correctRaw : options[0]?.id ?? '',
+  }
+}
+
+function parseQuizList(raw: unknown[]): QuizQuestion[] {
+  return raw
+    .map((q, i) => coerceQuizItem(q, i))
+    .filter((q): q is QuizQuestion => q !== null && !!q.prompt)
 }
 
 export function parseAiJson(raw: string, batchOffset = 0): AiBatchResult {
   const seen = new Set<string>()
-  const candidates = [
+  const baseCandidates = [
     normalizeModelJsonText(raw),
     stripJsonFence(raw),
+    tryFixCommonJsonIssues(normalizeModelJsonText(raw)),
+    tryFixCommonJsonIssues(stripJsonFence(raw)),
     raw.trim(),
+    tryFixCommonJsonIssues(raw.trim()),
   ].filter((s) => {
     if (!s) return false
     if (seen.has(s)) return false
@@ -140,7 +230,7 @@ export function parseAiJson(raw: string, batchOffset = 0): AiBatchResult {
     return true
   })
   let parsed: unknown | undefined
-  for (const cleaned of candidates) {
+  for (const cleaned of baseCandidates) {
     try {
       parsed = JSON.parse(cleaned)
       break
@@ -154,12 +244,48 @@ export function parseAiJson(raw: string, batchOffset = 0): AiBatchResult {
       `Model çıktısı geçerli JSON değil${hint ? ` (başlangıç: ${JSON.stringify(hint)}…)` : ''}`,
     )
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('JSON kökü nesne olmalı')
+
+  if (Array.isArray(parsed) && parsed.length === 0) {
+    return { chunks: [], quiz: [] }
   }
-  const o = parsed as Record<string, unknown>
+  if (Array.isArray(parsed) && parsed.length > 0) {
+    const first = parsed[0]
+    if (first && typeof first === 'object') {
+      const fr = first as Record<string, unknown>
+      const looksQuiz =
+        'prompt' in fr ||
+        'question' in fr ||
+        (Array.isArray(fr.options) && !('original' in fr))
+      if (looksQuiz && !('original' in fr && 'translation_tr' in fr)) {
+        return {
+          chunks: [],
+          quiz: parseQuizList(parsed as unknown[]),
+        }
+      }
+    }
+    throw new Error('Model çıktısı: beklenmeyen kök dizi biçimi')
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('JSON kökü nesne veya dizi olmalı')
+  }
+  function unwrapNestedPayload(obj: Record<string, unknown>): Record<string, unknown> {
+    const nestKeys = ['result', 'data', 'output', 'response'] as const
+    for (const k of nestKeys) {
+      const v = obj[k]
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        const inner = v as Record<string, unknown>
+        if (Array.isArray(inner.quiz) || Array.isArray(inner.chunks) || Array.isArray(inner.questions))
+          return inner
+      }
+    }
+    return obj
+  }
+  const o = unwrapNestedPayload(parsed as Record<string, unknown>)
   const chunksRaw = Array.isArray(o.chunks) ? o.chunks : []
-  const quizRaw = Array.isArray(o.quiz) ? o.quiz : []
+  let quizRaw = Array.isArray(o.quiz) ? o.quiz : []
+  if (!quizRaw.length && Array.isArray(o.questions)) quizRaw = o.questions
+  if (!quizRaw.length && Array.isArray(o.items)) quizRaw = o.items
 
   const chunks: LearningChunk[] = chunksRaw.map((c, i) => {
     if (!c || typeof c !== 'object') throw new Error('chunk geçersiz')
@@ -192,25 +318,9 @@ export function parseAiJson(raw: string, batchOffset = 0): AiBatchResult {
     }
   })
 
-  const quiz: QuizQuestion[] = quizRaw.map((q, i) => {
-    if (!q || typeof q !== 'object') throw new Error('quiz geçersiz')
-    const r = q as Record<string, unknown>
-    const options = Array.isArray(r.options)
-      ? r.options
-          .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
-          .map((o, j) => ({
-            id: typeof o.id === 'string' ? o.id : `opt-${i}-${j}`,
-            text: typeof o.text === 'string' ? o.text : '',
-          }))
-      : []
-    return {
-      id: typeof r.id === 'string' ? r.id : `quiz-${i}`,
-      prompt: typeof r.prompt === 'string' ? r.prompt : '',
-      options,
-      correctOptionId:
-        typeof r.correctOptionId === 'string' ? r.correctOptionId : options[0]?.id ?? '',
-    }
-  })
+  const quiz = quizRaw
+    .map((q, i) => coerceQuizItem(q, i))
+    .filter((q): q is QuizQuestion => q !== null && (!!q.prompt || q.options.length > 0))
 
   return { chunks, quiz }
 }
