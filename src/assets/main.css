@@ -1,0 +1,41 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply bg-surface text-fg antialiased;
+    font-family: 'DM Sans', system-ui, sans-serif;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+
+  ::selection {
+    @apply bg-accent/30 text-fg;
+  }
+}
+
+/* Kelime oyunları — akıllı tahta / geniş dokunma hedefi */
+@layer components {
+  /* Tam ekran modal içinde taşma yok: flex zinciri + min-h-0 ile kalan yükseklik paylaşılır */
+  .vocab-game-shell {
+    @apply mx-auto flex h-full min-h-0 w-full max-w-full flex-1 flex-col gap-1.5 overflow-hidden sm:gap-2 lg:gap-3 xl:max-w-7xl 2xl:max-w-[100rem];
+  }
+  .vocab-game-choice-btn {
+    @apply box-border flex h-full max-h-full min-h-0 w-full touch-manipulation items-center justify-center overflow-hidden rounded-lg border px-3 py-2 text-center text-[clamp(1.05rem,2.8vmin+0.45vw,2.05rem)] leading-snug transition-colors focus-visible:ring-2 focus-visible:ring-accent md:px-5 md:py-3;
+  }
+  /* Çok satırda da satırlar kutuya göre yatay ortalı */
+  .vocab-game-choice-btn > span {
+    @apply block w-full min-w-0 text-center;
+  }
+  .vocab-game-action-btn {
+    @apply inline-flex min-h-10 max-h-16 shrink-0 touch-manipulation items-center justify-center rounded-lg border px-4 py-2 text-[clamp(1.05rem,2.2vmin+0.35vw,1.5rem)] font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-accent md:min-h-12 md:px-6 md:py-3;
+  }
+  .vocab-game-caption {
+    @apply shrink-0 leading-snug text-fg-muted [font-size:clamp(1rem,2.4vmin+0.4vw,1.9rem)];
+  }
+}
