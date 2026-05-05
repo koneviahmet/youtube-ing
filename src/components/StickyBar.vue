@@ -27,6 +27,7 @@ const aiMenuOpen = ref(false)
 const hasEnvGeminiApiKey = __HAS_ENV_GEMINI_API_KEY__
 
 const canPlay = computed(() => !!store.videoId && !videoError.value)
+const hasStoredApiKey = computed(() => !!store.geminiApiKey.trim())
 
 const modelChoices = computed(() => {
   const id = snapshot.value.geminiModelId
@@ -353,7 +354,7 @@ onBeforeUnmount(() => {
                 autocomplete="off"
                 @input="onGeminiApiKeyInput"
               />
-              <p v-if="!hasEnvGeminiApiKey" class="mb-3 text-[10px] text-warn">
+              <p v-if="!hasEnvGeminiApiKey && !hasStoredApiKey" class="mb-3 text-[10px] text-warn">
                 AI için buraya anahtar girin; localStorage'da saklanır.
               </p>
               <p v-else class="mb-3 text-[10px] text-fg-subtle">
