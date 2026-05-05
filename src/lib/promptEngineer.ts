@@ -32,12 +32,54 @@ export interface AiBatchResult {
   quiz: QuizQuestion[]
 }
 
+/** İlk ```json ... ``` veya ``` ... ``` bloğunu çıkar; yoksa metni olduğu gibi döner */
 function stripJsonFence(raw: string): string {
   const t = raw.trim()
+  const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(t)
+  if (fence?.[1]) return fence[1].trim()
   if (t.startsWith('```')) {
     return t.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
   }
   return t
+}
+
+/** Metindeki ilk dengeli `{`…`}` nesnesini çıkarır (string içi kaçışlara dikkat). */
+export function extractBalancedJsonObject(s: string): string | null {
+  const start = s.indexOf('{')
+  if (start === -1) return null
+  let depth = 0
+  let inString = false
+  let escape = false
+  for (let i = start; i < s.length; i++) {
+    const c = s[i]
+    if (inString) {
+      if (escape) {
+        escape = false
+      } else if (c === '\\') {
+        escape = true
+      } else if (c === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (c === '"') {
+      inString = true
+      continue
+    }
+    if (c === '{') depth++
+    else if (c === '}') {
+      depth--
+      if (depth === 0) return s.slice(start, i + 1)
+    }
+  }
+  return null
+}
+
+/** Model bazen önce/sonra açıklama veya markdown döner; JSON'u güvenilir şekilde ayıkla */
+export function normalizeModelJsonText(raw: string): string {
+  const fenced = stripJsonFence(raw)
+  const balanced = extractBalancedJsonObject(fenced) ?? extractBalancedJsonObject(raw)
+  return (balanced ?? fenced).trim()
 }
 
 export function chunkSubtitles(blocks: SubtitleBlock[], maxLinesPerChunk = 6): SubtitleBlock[][] {
@@ -86,12 +128,31 @@ Questions should test vocabulary and comprehension. Mix difficulty. Output ONLY 
 }
 
 export function parseAiJson(raw: string, batchOffset = 0): AiBatchResult {
-  const cleaned = stripJsonFence(raw)
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(cleaned)
-  } catch {
-    throw new Error('Model çıktısı geçerli JSON değil')
+  const seen = new Set<string>()
+  const candidates = [
+    normalizeModelJsonText(raw),
+    stripJsonFence(raw),
+    raw.trim(),
+  ].filter((s) => {
+    if (!s) return false
+    if (seen.has(s)) return false
+    seen.add(s)
+    return true
+  })
+  let parsed: unknown | undefined
+  for (const cleaned of candidates) {
+    try {
+      parsed = JSON.parse(cleaned)
+      break
+    } catch {
+      /* try next */
+    }
+  }
+  if (parsed === undefined) {
+    const hint = raw.trim().slice(0, 120)
+    throw new Error(
+      `Model çıktısı geçerli JSON değil${hint ? ` (başlangıç: ${JSON.stringify(hint)}…)` : ''}`,
+    )
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('JSON kökü nesne olmalı')

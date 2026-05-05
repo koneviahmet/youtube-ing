@@ -14,6 +14,7 @@ const {
   aiTimeline,
   aiDebugOpen,
   aiDebugPrompt,
+  aiPipelineResume,
 } = storeToRefs(store)
 
 const srtInput = ref<HTMLInputElement | null>(null)
@@ -28,6 +29,19 @@ const hasEnvGeminiApiKey = __HAS_ENV_GEMINI_API_KEY__
 
 const canPlay = computed(() => !!store.videoId && !videoError.value)
 const hasStoredApiKey = computed(() => !!store.geminiApiKey.trim())
+
+const canRetryAi = computed(
+  () => snapshot.value.ai.processing.status === 'error' && aiPipelineResume.value != null,
+)
+
+const retryAiHint = computed(() => {
+  const r = aiPipelineResume.value
+  if (!r) return ''
+  if (r.phase === 'chunks') {
+    return `Kayıtlı ${r.partialChunks.length} kart; parti ${r.nextBatchIndex + 1}’ten sürer.`
+  }
+  return 'Tüm kartlar tamam; sınav üretimi tekrarlanır.'
+})
 
 const modelChoices = computed(() => {
   const id = snapshot.value.geminiModelId
@@ -97,6 +111,10 @@ function restoreBackup() {
 
 async function runAi() {
   await store.generateFromAi()
+}
+
+async function retryAi() {
+  await store.retryGenerateFromAi()
 }
 
 function onGeminiApiKeyInput(e: Event) {
@@ -379,6 +397,19 @@ onBeforeUnmount(() => {
               >
                 AI ile işle
               </button>
+
+              <button
+                v-if="canRetryAi"
+                type="button"
+                class="mb-3 w-full rounded-md border border-white/20 bg-white/5 py-2 text-sm font-medium text-fg hover:bg-white/10 disabled:opacity-40"
+                :disabled="snapshot.ai.processing.status === 'running' || !snapshot.srtBlocks.length"
+                @click="retryAi"
+              >
+                Tekrar dene
+              </button>
+              <p v-if="canRetryAi" class="mb-3 text-[10px] text-fg-subtle">
+                {{ retryAiHint }}
+              </p>
 
               <button
                 type="button"

@@ -4,9 +4,28 @@ import {
   buildUserPromptForBatch,
   chunkSubtitles,
   parseAiJson,
+  type AiBatchResult,
 } from '@/lib/promptEngineer'
 import { AUTO_GEMINI_MODEL_ID, DEFAULT_GEMINI_MODEL_ID } from '@/lib/geminiModels'
 import type { LearningChunk, QuizQuestion, SubtitleBlock } from '@/lib/schema'
+
+const JSON_STRICT_SUFFIX = `\n\nIMPORTANT: Reply with ONE valid JSON object only. No markdown, no code fences, no commentary before or after the JSON.`
+
+/** Kaldığı yerden devam için store/proxy ile taşınır */
+export type PipelineResumeState =
+  | { phase: 'chunks'; nextBatchIndex: number; partialChunks: LearningChunk[] }
+  | { phase: 'quiz'; chunks: LearningChunk[] }
+
+export class AiPipelineResumeError extends Error {
+  override name = 'AiPipelineResumeError'
+
+  constructor(
+    message: string,
+    public resume: PipelineResumeState,
+  ) {
+    super(message)
+  }
+}
 
 export interface PipelineDebugEvent {
   phase: string
@@ -147,6 +166,42 @@ async function generateJson(
   }
 }
 
+async function fetchBatchJson(
+  model: string,
+  user: string,
+  userApiKey: string,
+): Promise<string> {
+  try {
+    return await generateJson(model, aiSystemPrompt, user, userApiKey)
+  } catch {
+    await new Promise((r) => setTimeout(r, 1500))
+    return generateJson(model, aiSystemPrompt, user, userApiKey)
+  }
+}
+
+/**
+ * Bir partide JSON parse başarısız olursa aynı partide daha katı talimatla bir kez daha dener.
+ */
+async function parseBatchWithRetry(
+  model: string,
+  user: string,
+  userApiKey: string,
+  offset: number,
+): Promise<AiBatchResult> {
+  let text = await fetchBatchJson(model, user, userApiKey)
+  try {
+    return parseAiJson(text, offset)
+  } catch (firstParseErr) {
+    await new Promise((r) => setTimeout(r, 1200))
+    text = await fetchBatchJson(model, user + JSON_STRICT_SUFFIX, userApiKey)
+    try {
+      return parseAiJson(text, offset)
+    } catch {
+      throw firstParseErr
+    }
+  }
+}
+
 /** SRT partileri + 10 çoktan seçmeli sınav */
 export async function runPipeline(
   blocks: SubtitleBlock[],
@@ -154,32 +209,44 @@ export async function runPipeline(
   userApiKey: string,
   onProgress?: (msg: string) => void,
   onDebugPrompt?: (event: PipelineDebugEvent) => void,
+  resume?: PipelineResumeState,
 ): Promise<{ chunks: LearningChunk[]; quiz: QuizQuestion[] }> {
   const selected = modelId.trim()
   const model =
     !selected || selected === AUTO_GEMINI_MODEL_ID ? DEFAULT_GEMINI_MODEL_ID : selected
   const batches = chunkSubtitles(blocks, 6)
-  const allChunks: LearningChunk[] = []
-  let offset = 0
+  let allChunks: LearningChunk[] = []
+  let startBi = 0
 
-  for (let bi = 0; bi < batches.length; bi++) {
+  if (resume?.phase === 'chunks') {
+    allChunks = [...resume.partialChunks]
+    startBi = resume.nextBatchIndex
+  } else if (resume?.phase === 'quiz') {
+    allChunks = [...resume.chunks]
+    startBi = batches.length
+  }
+
+  for (let bi = startBi; bi < batches.length; bi++) {
     const batch = batches[bi]
+    let offset = 0
+    for (let i = 0; i < bi; i++) offset += batches[i].length
+
     onProgress?.(`Gemini (${model}): parti ${bi + 1}/${batches.length}`)
     const user = buildUserPromptForBatch(batch, offset, bi, batches.length)
     onDebugPrompt?.({
       phase: `Parti ${bi + 1}/${batches.length}`,
       prompt: user,
     })
-    let text: string
     try {
-      text = await generateJson(model, aiSystemPrompt, user, userApiKey)
-    } catch {
-      await new Promise((r) => setTimeout(r, 1500))
-      text = await generateJson(model, aiSystemPrompt, user, userApiKey)
+      const parsed = await parseBatchWithRetry(model, user, userApiKey, offset)
+      allChunks.push(...parsed.chunks)
+    } catch (e) {
+      throw new AiPipelineResumeError(String(e), {
+        phase: 'chunks',
+        nextBatchIndex: bi,
+        partialChunks: allChunks,
+      })
     }
-    const parsed = parseAiJson(text, offset)
-    allChunks.push(...parsed.chunks)
-    offset += batch.length
   }
 
   const summary = allChunks.map((c) => c.original).join('\n')
@@ -189,16 +256,29 @@ export async function runPipeline(
     phase: 'Sınav promptu',
     prompt: quizPrompt,
   })
-  let quizText: string
+  const quizOffset = blocks.length
   try {
-    quizText = await generateJson(model, aiSystemPrompt, quizPrompt, userApiKey)
-  } catch {
-    await new Promise((r) => setTimeout(r, 1500))
-    quizText = await generateJson(model, aiSystemPrompt, quizPrompt, userApiKey)
-  }
-  const quizParsed = parseAiJson(quizText, offset)
-  let quiz = quizParsed.quiz
-  if (quiz.length > 10) quiz = quiz.slice(0, 10)
+    let quizText = await fetchBatchJson(model, quizPrompt, userApiKey)
+    let quizParsed: AiBatchResult
+    try {
+      quizParsed = parseAiJson(quizText, quizOffset)
+    } catch (firstQuizParseErr) {
+      await new Promise((r) => setTimeout(r, 1200))
+      quizText = await fetchBatchJson(model, quizPrompt + JSON_STRICT_SUFFIX, userApiKey)
+      try {
+        quizParsed = parseAiJson(quizText, quizOffset)
+      } catch {
+        throw firstQuizParseErr
+      }
+    }
+    let quiz = quizParsed.quiz
+    if (quiz.length > 10) quiz = quiz.slice(0, 10)
 
-  return { chunks: allChunks, quiz }
+    return { chunks: allChunks, quiz }
+  } catch (e) {
+    throw new AiPipelineResumeError(String(e), {
+      phase: 'quiz',
+      chunks: allChunks,
+    })
+  }
 }

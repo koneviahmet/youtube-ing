@@ -1,4 +1,4 @@
-import { runPipeline } from '@/lib/gemini'
+import { AiPipelineResumeError, runPipeline, type PipelineResumeState } from '@/lib/gemini'
 import { parseImportedSnapshot } from '@/lib/snapshot'
 import {
   SCHEMA_VERSION,
@@ -45,6 +45,8 @@ function debounce(fn: () => void, ms: number) {
 export const useAppStore = defineStore('app', () => {
   const snapshot = ref<AppSnapshot>(loadInitial())
   const geminiApiKey = ref(loadGeminiApiKey())
+  /** Tamamlanmamış AI işlemini "Tekrar dene" ile sürdürmek için */
+  const aiPipelineResume = ref<PipelineResumeState | null>(null)
   const playerCurrentSec = ref(snapshot.value.lastPlaybackSec ?? 0)
   function loadGeminiApiKey(): string {
     try {
@@ -167,6 +169,7 @@ export const useAppStore = defineStore('app', () => {
     snapshot.value = data
     playerCurrentSec.value = data.lastPlaybackSec ?? 0
     srtError.value = null
+    aiPipelineResume.value = null
     persist()
   }
 
@@ -193,6 +196,7 @@ export const useAppStore = defineStore('app', () => {
       }
       snapshot.value.srtBlocks = blocks
       snapshot.value.ai = emptyAiPayload()
+      aiPipelineResume.value = null
       captionStatus.value = { state: 'ok', message: `${blocks.length} satır yerel SRT yüklendi` }
     } catch (e) {
       srtError.value = String(e)
@@ -211,6 +215,7 @@ export const useAppStore = defineStore('app', () => {
       const { blocks, track } = await fetchAutoCaptionBlocks(vid)
       snapshot.value.srtBlocks = blocks
       snapshot.value.ai = emptyAiPayload()
+      aiPipelineResume.value = null
       srtError.value = null
       lastCaptionVideoId.value = vid
       const trackName = track.name ? ` (${track.name})` : ''
@@ -239,6 +244,7 @@ export const useAppStore = defineStore('app', () => {
     srtError.value = null
     captionStatus.value = { state: 'idle' }
     lastCaptionVideoId.value = null
+    aiPipelineResume.value = null
     persist()
   }
 
@@ -300,7 +306,7 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  async function generateFromAi() {
+  async function generateFromAi(fromRetry = false) {
     const blocks = snapshot.value.srtBlocks
     if (!blocks.length) {
       snapshot.value.ai.processing = {
@@ -310,7 +316,21 @@ export const useAppStore = defineStore('app', () => {
       pushAiTimeline('Hata: Önce bir SRT dosyası yükleyin')
       return
     }
-    aiTimeline.value = ['AI işlemi başlatıldı']
+    const resume = fromRetry ? aiPipelineResume.value : undefined
+    if (fromRetry && !resume) {
+      snapshot.value.ai.processing = {
+        status: 'error',
+        lastError: 'Sürdürülecek yarım kalmış AI işlemi yok',
+      }
+      pushAiTimeline('Hata: Sürdürülecek kayıt yok')
+      return
+    }
+    if (!fromRetry) {
+      aiTimeline.value = ['AI işlemi başlatıldı']
+      aiPipelineResume.value = null
+    } else {
+      pushAiTimeline('Kaldığı yerden devam ediliyor…')
+    }
     aiDebugPrompt.value = ''
     snapshot.value.ai.processing = { status: 'running', message: 'Başlıyor…' }
     try {
@@ -326,16 +346,35 @@ export const useAppStore = defineStore('app', () => {
           aiDebugPrompt.value = `# ${phase}\n\n${prompt}`
           pushAiTimeline(`Prompt hazırlandı: ${phase}`)
         },
+        resume ?? undefined,
       )
+      aiPipelineResume.value = null
       snapshot.value.ai.chunks = chunks
       snapshot.value.ai.quiz = quiz
       snapshot.value.ai.processing = { status: 'idle', message: 'Tamamlandı' }
       pushAiTimeline(`Tamamlandı: ${chunks.length} kart, ${quiz.length} soru`)
     } catch (e) {
-      const err = String(e)
-      snapshot.value.ai.processing = { status: 'error', lastError: err }
-      pushAiTimeline(`Hata: ${err}`)
+      if (e instanceof AiPipelineResumeError) {
+        aiPipelineResume.value = e.resume
+        if (e.resume.phase === 'chunks') {
+          snapshot.value.ai.chunks = e.resume.partialChunks
+          snapshot.value.ai.quiz = []
+        } else {
+          snapshot.value.ai.chunks = e.resume.chunks
+        }
+        const err = String(e.message)
+        snapshot.value.ai.processing = { status: 'error', lastError: err }
+        pushAiTimeline(`Hata: ${err}`)
+      } else {
+        const err = String(e)
+        snapshot.value.ai.processing = { status: 'error', lastError: err }
+        pushAiTimeline(`Hata: ${err}`)
+      }
     }
+  }
+
+  async function retryGenerateFromAi() {
+    await generateFromAi(true)
   }
 
   return {
@@ -360,6 +399,8 @@ export const useAppStore = defineStore('app', () => {
     exportJsonBlob,
     importJsonFile,
     generateFromAi,
+    retryGenerateFromAi,
+    aiPipelineResume,
     setGeminiApiKey,
     captionStatus,
     aiTimeline,
