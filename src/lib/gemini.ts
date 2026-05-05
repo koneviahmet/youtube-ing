@@ -50,6 +50,7 @@ async function postGenerate(
   system: string,
   userText: string,
   jsonMode: boolean,
+  apiKey?: string,
 ): Promise<string> {
   const body: GeminiGenerateBody = {
     model,
@@ -63,7 +64,10 @@ async function postGenerate(
   }
   const res = await fetch('/api/gemini/generateContent', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(apiKey ? { 'x-user-gemini-key': apiKey } : {}),
+    },
     body: JSON.stringify(body),
   })
   const text = await res.text()
@@ -84,17 +88,18 @@ async function generateJson(
   model: string,
   system: string,
   userText: string,
+  apiKey?: string,
 ): Promise<string> {
   try {
-    return await postGenerate(model, system, userText, true)
+    return await postGenerate(model, system, userText, true, apiKey)
   } catch (e1) {
     const m1 = String(e1)
     if (!/400|unsupported|responseMimeType|mime/i.test(m1)) throw e1
     try {
-      return await postGenerate(model, system, userText, false)
+      return await postGenerate(model, system, userText, false, apiKey)
     } catch {
       await new Promise((r) => setTimeout(r, 1200))
-      return postGenerate(model, system, userText, false)
+      return postGenerate(model, system, userText, false, apiKey)
     }
   }
 }
@@ -103,6 +108,7 @@ async function generateJson(
 export async function runPipeline(
   blocks: SubtitleBlock[],
   modelId: string,
+  userApiKey: string,
   onProgress?: (msg: string) => void,
   onDebugPrompt?: (event: PipelineDebugEvent) => void,
 ): Promise<{ chunks: LearningChunk[]; quiz: QuizQuestion[] }> {
@@ -123,10 +129,10 @@ export async function runPipeline(
     })
     let text: string
     try {
-      text = await generateJson(model, aiSystemPrompt, user)
+      text = await generateJson(model, aiSystemPrompt, user, userApiKey)
     } catch {
       await new Promise((r) => setTimeout(r, 1500))
-      text = await generateJson(model, aiSystemPrompt, user)
+      text = await generateJson(model, aiSystemPrompt, user, userApiKey)
     }
     const parsed = parseAiJson(text, offset)
     allChunks.push(...parsed.chunks)
@@ -142,10 +148,10 @@ export async function runPipeline(
   })
   let quizText: string
   try {
-    quizText = await generateJson(model, aiSystemPrompt, quizPrompt)
+    quizText = await generateJson(model, aiSystemPrompt, quizPrompt, userApiKey)
   } catch {
     await new Promise((r) => setTimeout(r, 1500))
-    quizText = await generateJson(model, aiSystemPrompt, quizPrompt)
+    quizText = await generateJson(model, aiSystemPrompt, quizPrompt, userApiKey)
   }
   const quizParsed = parseAiJson(quizText, offset)
   let quiz = quizParsed.quiz

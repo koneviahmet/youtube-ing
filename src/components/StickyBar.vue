@@ -24,6 +24,7 @@ const aiRootRef = ref<HTMLElement | null>(null)
 const fileMenuOpen = ref(false)
 const sessionMenuOpen = ref(false)
 const aiMenuOpen = ref(false)
+const hasEnvGeminiApiKey = __HAS_ENV_GEMINI_API_KEY__
 
 const canPlay = computed(() => !!store.videoId && !videoError.value)
 
@@ -95,6 +96,11 @@ function restoreBackup() {
 
 async function runAi() {
   await store.generateFromAi()
+}
+
+function onGeminiApiKeyInput(e: Event) {
+  const value = (e.target as HTMLInputElement).value
+  store.setGeminiApiKey(value)
 }
 
 function closeAllMenus() {
@@ -334,6 +340,26 @@ onBeforeUnmount(() => {
               @click.stop
             >
               <p class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-fg-subtle">Gemini modeli</p>
+              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-fg-subtle">
+                Gemini API Key
+              </label>
+              <input
+                :value="store.geminiApiKey"
+                type="password"
+                class="mb-2 w-full rounded-md border border-white/15 bg-surface-overlay px-2 py-2 text-xs text-fg placeholder:text-fg-subtle focus:border-accent/40"
+                :placeholder="
+                  hasEnvGeminiApiKey ? 'Opsiyonel (env yoksa kullanılır)' : 'Env bulunamadı, API key gerekli'
+                "
+                autocomplete="off"
+                @input="onGeminiApiKeyInput"
+              />
+              <p v-if="!hasEnvGeminiApiKey" class="mb-3 text-[10px] text-warn">
+                `.env` içinde `GEMINI_API_KEY` yok. AI için buraya anahtar girin; localStorage'da saklanır.
+              </p>
+              <p v-else class="mb-3 text-[10px] text-fg-subtle">
+                `.env` anahtarı varsa öncelik ondadır, yoksa bu alandaki anahtar kullanılır.
+              </p>
+
               <select
                 v-model="snapshot.geminiModelId"
                 class="mb-3 w-full rounded-md border border-white/15 bg-surface-overlay px-2 py-2 text-xs text-fg focus:border-accent/40 disabled:opacity-50"

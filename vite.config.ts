@@ -165,10 +165,22 @@ export default defineConfig(({ mode }) => {
 
           server.middlewares.use('/api/gemini/generateContent', async (req, res, next) => {
             if (req.method !== 'POST') return next()
-            if (!apiKey) {
+            const userProvidedApiKeyHeader = req.headers['x-user-gemini-key']
+            const userProvidedApiKey =
+              typeof userProvidedApiKeyHeader === 'string'
+                ? userProvidedApiKeyHeader.trim()
+                : Array.isArray(userProvidedApiKeyHeader)
+                  ? (userProvidedApiKeyHeader[0] ?? '').trim()
+                  : ''
+            const effectiveApiKey = apiKey || userProvidedApiKey
+            if (!effectiveApiKey) {
               res.statusCode = 500
               res.setHeader('Content-Type', 'application/json')
-              res.end(JSON.stringify({ error: 'GEMINI_API_KEY eksik (.env)' }))
+              res.end(
+                JSON.stringify({
+                  error: 'GEMINI_API_KEY eksik (.env). AI menüsünden API key girin.',
+                }),
+              )
               return
             }
             try {
@@ -185,7 +197,7 @@ export default defineConfig(({ mode }) => {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
-                  'x-goog-api-key': apiKey,
+                  'x-goog-api-key': effectiveApiKey,
                 },
                 body: JSON.stringify(geminiBody),
               })
@@ -207,6 +219,9 @@ export default defineConfig(({ mode }) => {
     ],
     resolve: {
       alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+    },
+    define: {
+      __HAS_ENV_GEMINI_API_KEY__: JSON.stringify(Boolean(apiKey)),
     },
   }
 })

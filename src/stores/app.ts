@@ -14,6 +14,7 @@ import { computed, ref, watch } from 'vue'
 
 const LS_KEY = 'youtube-ing-state-v1'
 const BACKUP_KEY = 'youtube-ing-backup-v1'
+const GEMINI_API_KEY_LS_KEY = 'youtube-ing-gemini-api-key-v1'
 const USE_DEFAULT_IMPORTS = String(import.meta.env.VITE_USE_DEFAULT_IMPORTS ?? '').toLowerCase() === 'true'
 const defaultJsonModules = import.meta.glob('../../youtube-ing-*.json', {
   eager: true,
@@ -43,7 +44,27 @@ function debounce(fn: () => void, ms: number) {
 
 export const useAppStore = defineStore('app', () => {
   const snapshot = ref<AppSnapshot>(loadInitial())
+  const geminiApiKey = ref(loadGeminiApiKey())
   const playerCurrentSec = ref(snapshot.value.lastPlaybackSec ?? 0)
+  function loadGeminiApiKey(): string {
+    try {
+      return (localStorage.getItem(GEMINI_API_KEY_LS_KEY) ?? '').trim()
+    } catch {
+      return ''
+    }
+  }
+
+  function setGeminiApiKey(value: string) {
+    const next = value.trim()
+    geminiApiKey.value = next
+    try {
+      if (next) localStorage.setItem(GEMINI_API_KEY_LS_KEY, next)
+      else localStorage.removeItem(GEMINI_API_KEY_LS_KEY)
+    } catch {
+      /* storage unavailable */
+    }
+  }
+
   const playing = ref(false)
   const srtError = ref<string | null>(null)
   const captionStatus = ref<{ state: 'idle' | 'loading' | 'ok' | 'error'; message?: string }>({
@@ -296,6 +317,7 @@ export const useAppStore = defineStore('app', () => {
       const { chunks, quiz } = await runPipeline(
         blocks,
         snapshot.value.geminiModelId,
+        geminiApiKey.value,
         (msg) => {
           snapshot.value.ai.processing = { status: 'running', message: msg }
           pushAiTimeline(msg)
@@ -318,6 +340,7 @@ export const useAppStore = defineStore('app', () => {
 
   return {
     snapshot,
+    geminiApiKey,
     playerCurrentSec,
     playing,
     videoError,
@@ -337,6 +360,7 @@ export const useAppStore = defineStore('app', () => {
     exportJsonBlob,
     importJsonFile,
     generateFromAi,
+    setGeminiApiKey,
     captionStatus,
     aiTimeline,
     aiDebugPrompt,
