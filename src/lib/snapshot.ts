@@ -122,3 +122,20 @@ export function parseImportedSnapshot(raw: unknown): AppSnapshot {
     lastPlaybackSec,
   }
 }
+
+/**
+ * Dışa aktarılan JSON'da öğrenme kartlarının `original` metnini, düzenlenmiş SRT
+ * satırlarıyla hizalar (`srtIndices` üzerinden).
+ */
+export function syncChunkOriginalsFromSrt(doc: AppSnapshot): void {
+  const blocks = doc.srtBlocks
+  for (const chunk of doc.ai.chunks) {
+    const indices =
+      chunk.srtIndices?.filter((n) => Number.isInteger(n) && n >= 0 && n < blocks.length) ?? []
+    if (!indices.length) continue
+    chunk.original = indices
+      .map((i) => blocks[i]?.text ?? '')
+      .join('\n')
+      .trim()
+  }
+}

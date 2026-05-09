@@ -1,10 +1,11 @@
 import { AiPipelineResumeError, runPipeline, type PipelineResumeState } from '@/lib/gemini'
-import { parseImportedSnapshot } from '@/lib/snapshot'
+import { parseImportedSnapshot, syncChunkOriginalsFromSrt } from '@/lib/snapshot'
 import {
   SCHEMA_VERSION,
   defaultSnapshot,
   emptyAiPayload,
   type AppSnapshot,
+  type SubtitleBlock,
 } from '@/lib/schema'
 import { parseSrt } from '@/lib/srt'
 import { fetchAutoCaptionBlocks } from '@/lib/youtubeCaptions'
@@ -301,12 +302,56 @@ export const useAppStore = defineStore('app', () => {
   refreshHasBackup()
 
   function exportJsonBlob(): Blob {
-    const doc: AppSnapshot = {
-      ...snapshot.value,
-      schemaVersion: SCHEMA_VERSION,
-      lastPlaybackSec: playerCurrentSec.value,
-    }
+    const doc = JSON.parse(JSON.stringify(snapshot.value)) as AppSnapshot
+    doc.schemaVersion = SCHEMA_VERSION
+    doc.lastPlaybackSec = playerCurrentSec.value
+    syncChunkOriginalsFromSrt(doc)
     return new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' })
+  }
+
+  function mergeSrtBlocksOnto(dragIdx: number, dropIdx: number) {
+    const list = snapshot.value.srtBlocks
+    if (
+      dragIdx === dropIdx ||
+      dragIdx < 0 ||
+      dropIdx < 0 ||
+      dragIdx >= list.length ||
+      dropIdx >= list.length
+    ) {
+      return
+    }
+    const target = list[dropIdx]
+    const dragged = list[dragIdx]
+
+    const textT = target.text.replace(/\r\n/g, '\n').trim()
+    const textD = dragged.text.replace(/\r\n/g, '\n').trim()
+    const mergedText = [textT, textD].filter(Boolean).join('\n')
+
+    let startSec = target.startSec
+    let endSec = dragged.endSec
+    if (endSec < startSec) {
+      startSec = Math.min(target.startSec, dragged.startSec)
+      endSec = Math.max(target.endSec, dragged.endSec)
+    }
+
+    const merged: SubtitleBlock = {
+      ...target,
+      text: mergedText,
+      startSec,
+      endSec,
+    }
+
+    const arr = [...list]
+    arr.splice(dragIdx, 1)
+    const newDropIdx = dragIdx < dropIdx ? dropIdx - 1 : dropIdx
+    arr.splice(newDropIdx, 1, merged)
+
+    snapshot.value.srtBlocks = arr.map((b, i) => ({
+      ...b,
+      index: i,
+    }))
+    snapshot.value.ai = emptyAiPayload()
+    aiPipelineResume.value = null
   }
 
   async function importJsonFile(file: File) {
@@ -414,6 +459,7 @@ export const useAppStore = defineStore('app', () => {
     setActiveTab,
     loadSrtFromFile,
     loadSrtFromVideo,
+    mergeSrtBlocksOnto,
     seekSeconds,
     resetAll,
     resetWithBackup,
